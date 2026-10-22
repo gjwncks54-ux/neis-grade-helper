@@ -1,4 +1,4 @@
-/* 성적 입력 도우미 v1.4 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
+/* 성적 입력 도우미 v1.4.1 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
 (function(){
 var _h=document.getElementById("ngh-host");if(_h){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}
 /* ===== core: bytes, crypto, CFB, ZIP, XLSX (no external libs) ===== */
@@ -461,7 +461,7 @@ var NGH = (function () {
 /* ===== app: 성적 입력 도우미 (점수 → 단계 → 나이스 dsMain / 결과 엑셀) ===== */
 (function () {
   'use strict';
-  var VERSION = '1.4';
+  var VERSION = '1.4.1';
 
   // ── 영역별 계산 방식 (학교 양식에 맞춰 한 번만 정해두는 곳) ──
   // cols: 점수 열 제목(소제목 줄)과 맞출 패턴, 여러 개면 평균
@@ -667,10 +667,22 @@ var NGH = (function () {
     ['mousedown', 'mouseup', 'click'].forEach(function (t) { el.dispatchEvent(new MouseEvent(t, { bubbles: true })); });
     return true;
   }
+  function menuClick(selector, re) {
+    var el = Array.prototype.filter.call(document.querySelectorAll(selector), function (e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && re.test(norm(e.innerText || e.textContent)); })[0];
+    if (!el) return false;
+    el.click(); return true;
+  }
+  function neisAlertText() {
+    return Array.prototype.map.call(document.querySelectorAll('.cl-dialog.modal-msg'), function (e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 ? norm(e.innerText) : ''; }).filter(Boolean)[0] || '';
+  }
+  function checkNeisAlert(step) {
+    var t = neisAlertText();
+    if (t) throw new Error('나이스 알림이 떠서 멈췄습니다' + (step ? ' (' + step + ')' : '') + ': ' + t.replace(/^알림\s*/, '').replace(/\s*확인$/, '') + ' — 알림을 닫고 다시 눌러주세요.');
+  }
   function authCombos() {
     var P = cpr.core.Platform.INSTANCE;
     var cs = P.getAllRunningAppInstances().filter(function (a) { if (!/udcSwcAuth/.test(a.id)) return false; try { return a.getContainer().isShowing(); } catch (e) { return false; } })
-      .map(function (a) { var c = a.lookup('cmbUdcAuth'); return { c: c, items: c.getItems().map(function (x) { return { label: String(x.label), value: String(x.value) }; }) }; });
+      .map(function (a) { var c = null; try { c = a.lookup('cmbUdcAuth'); } catch (e) {} return c ? { c: c, items: c.getItems().map(function (x) { return { label: String(x.label), value: String(x.value) }; }) } : null; }).filter(Boolean);
     return {
       year: cs.filter(function (x) { return x.items.some(function (i) { return /^\d{4}$/.test(i.value); }); })[0],
       sem: cs.filter(function (x) { return x.items.length && x.items.every(function (i) { return /^[12]$/.test(i.value); }); })[0],
@@ -680,14 +692,23 @@ var NGH = (function () {
     };
   }
   async function ensureSubjectScreen() {
-    function m02() { return cpr.core.Platform.INSTANCE.getAllRunningAppInstances().filter(function (a) { if (!/els_scres00_m02/.test(a.id)) return false; try { return a.getContainer().isShowing(); } catch (e) { return false; } })[0]; }
+    function m02() { return cpr.core.Platform.INSTANCE.getAllRunningAppInstances().filter(function (a) { if (!/els_scres00_m02/.test(a.id)) return false; try { return a.getContainer().isShowing() && a.lookup('dsMain') && a.lookup('btnSearch'); } catch (e) { return false; } })[0]; }
     if (m02()) return m02();
-    if (!cpr.core.Platform.INSTANCE.getAllRunningAppInstances().some(function (a) { return /els_scres00_m00/.test(a.id); })) {
-      if (!visibleTextClick('교과평가')) { visibleTextClick('영어교육-성적'); await sleep(500); visibleTextClick('학생평가'); await sleep(500); visibleTextClick('교과평가'); }
-      for (var i = 0; i < 30 && !cpr.core.Platform.INSTANCE.getAllRunningAppInstances().some(function (a) { return /els_scres00_m00/.test(a.id); }); i++) await sleep(300);
+    function m00Showing() { return cpr.core.Platform.INSTANCE.getAllRunningAppInstances().some(function (a) { if (!/els_scres00_m00/.test(a.id)) return false; try { return a.getContainer().isShowing(); } catch (e) { return false; } }); }
+    var openTab = Array.prototype.filter.call(document.querySelectorAll('[role=tab]'), function (e) { return /^교과평가(?:\s|$)/.test(norm(e.innerText)); })[0];
+    if (openTab && !m00Showing()) { openTab.click(); for (var t = 0; t < 20 && !m00Showing(); t++) await sleep(250); }
+    if (!m00Showing()) {
+      if (!menuClick('a.cl-sidenavigation-item', /^교과평가(?:\s|$)/) && !visibleTextClick('교과평가')) {
+        menuClick('a.cl-navigationbar-content', /영어교육-성적/); await sleep(700);
+        menuClick('a.cl-navigationbar-listitem', /^학생평가(?:\s|$)/); await sleep(900);
+        if (!menuClick('a.cl-sidenavigation-item', /^교과평가(?:\s|$)/)) visibleTextClick('교과평가');
+      }
+      for (var i = 0; i < 30 && !m00Showing(); i++) await sleep(300);
+      checkNeisAlert('교과평가 열기');
     }
     visibleTextClick('교과별 평가');
     for (var j = 0; j < 30 && !m02(); j++) await sleep(300);
+    checkNeisAlert('교과별 평가 탭');
     if (!m02()) throw new Error('교과평가 > 교과별 평가 화면을 열지 못했습니다. 메뉴에서 직접 연 뒤 다시 눌러주세요.');
     return m02();
   }
@@ -695,19 +716,21 @@ var NGH = (function () {
   async function goClass(cls) {
     var m = /^(\d+)-(\d+)$/.exec(cls); if (!m) throw new Error('반 표기를 읽지 못했습니다: ' + cls);
     if (modifiedRows() && !confirm('지금 화면에 저장하지 않은 입력값이 있습니다. 다른 반을 조회하면 사라집니다.\n계속할까요?')) return false;
+    checkNeisAlert('시작 전');
     var app = await ensureSubjectScreen(), f = authCombos();
     if (!f.grade || !f.cls || !f.sbjt) throw new Error('학년·반·교과 선택칸을 찾지 못했습니다.');
     if (!f.grade.items.some(function (i) { return i.value === m[1]; })) throw new Error('나이스에서 ' + m[1] + '학년을 선택할 수 없습니다.');
-    f.grade.c.selectItemByValue(m[1]); await sleep(1200); f = authCombos();
+    f.grade.c.selectItemByValue(m[1]); await sleep(1200); checkNeisAlert('학년 선택'); f = authCombos();
     var clsCode = ('0' + m[2]).slice(-2);
     if (!f.cls || !f.cls.items.some(function (i) { return i.value === clsCode; })) throw new Error('나이스에서 ' + cls + '반을 선택할 수 없습니다.');
-    f.cls.c.selectItemByValue(clsCode); await sleep(900); f = authCombos();
+    f.cls.c.selectItemByValue(clsCode); await sleep(900); checkNeisAlert('반 선택'); f = authCombos();
     var eng = f.sbjt.items.filter(function (i) { return /영어/.test(i.label); })[0]; if (!eng) throw new Error(cls + '반 교과 목록에 영어가 없습니다.');
-    f.sbjt.c.selectItemByValue(eng.value); await sleep(700);
+    f.sbjt.c.selectItemByValue(eng.value); await sleep(700); checkNeisAlert('교과 선택');
     var ds = app.lookup('dsMain');
     function loaded() { return ds.getRowCount() && String(ds.getValue(0, 'grd')) === m[1] && String(ds.getValue(0, 'clsCd')) === clsCode && /영어/.test(ds.getValue(0, 'sbjtNm')); }
     app.lookup('btnSearch').click();
-    for (var i = 0; i < 70 && !loaded(); i++) await sleep(300);
+    for (var i = 0; i < 70 && !loaded() && !neisAlertText(); i++) await sleep(300);
+    await sleep(500); checkNeisAlert('조회');
     if (!ds.getRowCount()) throw new Error(cls + '반 조회 결과가 없습니다.');
     if (!loaded()) throw new Error('조회 후 화면이 ' + cls + '반 영어로 바뀌지 않았습니다. 나이스 알림창이 떠 있는지 확인하세요.');
     return true;
