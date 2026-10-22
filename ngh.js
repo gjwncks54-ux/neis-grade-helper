@@ -1,6 +1,6 @@
-/* 성적 입력 도우미 v1.4.1 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
+/* 성적 입력 도우미 v1.4.2 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
 (function(){
-var _h=document.getElementById("ngh-host");if(_h){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}
+var NGH_VER="1.4.2";var _h=document.getElementById("ngh-host");if(_h){var _t=(_h.shadowRoot&&_h.shadowRoot.querySelector(".hd")&&_h.shadowRoot.querySelector(".hd").innerText)||"";if(_t.indexOf("v"+NGH_VER)>=0){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}_h.remove();window.__ngh=null;}
 /* ===== core: bytes, crypto, CFB, ZIP, XLSX (no external libs) ===== */
 var NGH = (function () {
   'use strict';
@@ -461,7 +461,7 @@ var NGH = (function () {
 /* ===== app: 성적 입력 도우미 (점수 → 단계 → 나이스 dsMain / 결과 엑셀) ===== */
 (function () {
   'use strict';
-  var VERSION = '1.4.1';
+  var VERSION = '1.4.2';
 
   // ── 영역별 계산 방식 (학교 양식에 맞춰 한 번만 정해두는 곳) ──
   // cols: 점수 열 제목(소제목 줄)과 맞출 패턴, 여러 개면 평균
