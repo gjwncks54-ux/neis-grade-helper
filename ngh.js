@@ -1,6 +1,6 @@
-/* 성적 입력 도우미 v1.4.3 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
+/* 성적 입력 도우미 v1.4.5 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
 (function(){
-var NGH_VER="1.4.3";var _h=document.getElementById("ngh-host");if(_h){var _t=(_h.shadowRoot&&_h.shadowRoot.querySelector(".hd")&&_h.shadowRoot.querySelector(".hd").innerText)||"";if(_t.indexOf("v"+NGH_VER)>=0){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}_h.remove();window.__ngh=null;}
+var NGH_VER="1.4.5";var _h=document.getElementById("ngh-host");if(_h){var _t=(_h.shadowRoot&&_h.shadowRoot.querySelector(".hd")&&_h.shadowRoot.querySelector(".hd").innerText)||"";if(_t.indexOf("v"+NGH_VER)>=0){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}_h.remove();window.__ngh=null;}
 /* ===== core: bytes, crypto, CFB, ZIP, XLSX (no external libs) ===== */
 var NGH = (function () {
   'use strict';
@@ -461,7 +461,7 @@ var NGH = (function () {
 /* ===== app: 성적 입력 도우미 (점수 → 단계 → 나이스 dsMain / 결과 엑셀) ===== */
 (function () {
   'use strict';
-  var VERSION = '1.4.3';
+  var VERSION = '1.4.5';
 
   // ── 영역별 계산 방식 (학교 양식에 맞춰 한 번만 정해두는 곳) ──
   // cols: 점수 열 제목(소제목 줄)과 맞출 패턴, 여러 개면 평균
@@ -754,11 +754,22 @@ var NGH = (function () {
     if (!n) return { errs: ['나이스 화면을 찾지 못했습니다.'], warns: warns };
     var vals = Object.keys(S.map).map(function (k) { return S.map[k]; }).filter(Boolean);
     RECIPE.forEach(function (rc) { var c = vals.filter(function (v) { return v === rc.area; }).length; if (c !== 1) errs.push(rc.area + ' 연결이 ' + c + '개입니다.'); });
+    n.elements.forEach(function (el) { var want = inferArea(el), got = S.map[el.key]; if (!want) errs.push('평가요소 영역을 판단할 수 없습니다: ' + el.goal); else if (got !== want) errs.push('평가요소 연결 오류: "' + el.goal + '"은(는) ' + want + '여야 하는데 ' + (got || '연결 없음') + '입니다.'); });
     if (vals.length !== n.elements.length) errs.push('연결되지 않은 나이스 평가요소가 있습니다.');
-    ms.forEach(function (m) { if (m.st === 'nameDiff') errs.push(m.s.cls + ' ' + m.s.no + '번 이름 불일치: 엑셀 ' + m.s.name + ', 나이스 ' + n.students[m.s.no]); else if (m.st === 'notInNeis') errs.push(m.s.cls + ' ' + m.s.no + '번 ' + m.s.name + '이(가) 나이스에 없습니다.'); });
+    ms.forEach(function (m) {
+      var ek = 'excel:' + (m.s.key || m.s.no);
+      if (m.st === 'nameDiff') errs.push(m.s.cls + ' ' + m.s.no + '번 이름 불일치: 엑셀 ' + m.s.name + ', 나이스 ' + n.students[m.s.no]);
+      else if (m.st === 'notInNeis') { if (S.exceptions[ek] === 'exclude') warns.push('입력 제외: ' + m.s.cls + ' ' + m.s.no + '번 ' + m.s.name + ' (엑셀에만 있음)'); else errs.push(m.s.cls + ' ' + m.s.no + '번 ' + m.s.name + '이(가) 나이스에 없습니다.'); }
+    });
     var inX = {}; ms.forEach(function (m) { inX[m.s.no] = 1; });
     var noScore = d.integrated ? d.noScore.filter(function (x) { return x.indexOf(n.grd + '-' + n.cls + ' ') === 0; }) : [];
-    Object.keys(n.students).forEach(function (no) { if (!inX[no]) { var txt = n.grd + '-' + n.cls + ' ' + no + '번 ' + n.students[no]; if (noScore.some(function (x) { return x.indexOf(n.grd + '-' + n.cls + ' ' + no + '번 ') === 0; })) warns.push('점수 없음: ' + txt); else errs.push('엑셀에 없는 나이스 학생: ' + txt); } });
+    Object.keys(n.students).forEach(function (no) {
+      if (inX[no]) return;
+      var txt = n.grd + '-' + n.cls + ' ' + no + '번 ' + n.students[no], nk = 'neis:' + n.grd + '-' + n.cls + '-' + no;
+      if (noScore.some(function (x) { return x.indexOf(n.grd + '-' + n.cls + ' ' + no + '번 ') === 0; })) warns.push('점수 없음(입력 안 함): ' + txt);
+      else if (S.exceptions[nk] === 'skip') warns.push('입력 안 함: ' + txt + ' (나이스에만 있음)');
+      else errs.push('엑셀에 없는 나이스 학생: ' + txt);
+    });
     ms.forEach(function (m) { RECIPE.forEach(function (rc) { if (m.s.scores[rc.area] == null) errs.push(m.s.cls + ' ' + m.s.no + '번 ' + rc.area + ' 점수 없음'); }); });
     if (!cutsReady()) errs.push('기준값이 비어 있거나 순서가 맞지 않습니다.');
     return { errs: errs, warns: warns };
@@ -776,7 +787,7 @@ var NGH = (function () {
   // ───────────────────────── 상태 ─────────────────────────
   var S = {
     file: null, bytes: null, password: '', wb: null, data: null, neis: null,
-    map: {}, levels: {}, cut: {}, cutTouched: {}, override: {}, classProgress: {}
+    map: {}, levels: {}, cut: {}, cutTouched: {}, override: {}, classProgress: {}, exceptions: {}
   };
   function loadJSON(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
   function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -967,12 +978,22 @@ var NGH = (function () {
     else renderOpen();
   }
   function setupState() {
-    S.override = {}; S.cutTouched = {};
+    S.override = {}; S.cutTouched = {}; S.exceptions = {};
     setupMapLevels();
+  }
+  function inferArea(el) {
+    var t = (el.goal || '') + ' ' + (el.relm || '');
+    if (/읽/.test(t)) return 'Reading';
+    if (/듣/.test(t)) return 'Listening';
+    if (/쓰기|쓰는|문장\s*쓰/.test(t)) return 'Writing';
+    if (/말하|말하기|활동/.test(t)) return 'Speaking';
+    return '';
   }
   function setupMapLevels() {
     S.map = {};
-    if (S.neis) {
+    if (S.neis && S.data && S.data.integrated) {
+      S.neis.elements.forEach(function (el) { S.map[el.key] = inferArea(el); });
+    } else if (S.neis) {
       var saved = loadJSON(LS_MAP + S.neis.sbjtCd + '.' + S.neis.grd, {});
       S.neis.elements.forEach(function (el) {
         if (saved[el.key] !== undefined) { S.map[el.key] = saved[el.key]; return; }
@@ -1109,11 +1130,27 @@ var NGH = (function () {
       if (miss.length) notes.push('<div class="warn small">엑셀에 없는 나이스 학생(입력 안 함): ' + miss.map(function (no) { return no + '번 ' + esc(S.neis.students[no]); }).join(', ') + '</div>');
     }
     if (S.data.integrated && S.neis) {
+      var exRows = [];
+      ms.filter(function (m) { return m.st === 'notInNeis'; }).forEach(function (m) {
+        var k = 'excel:' + (m.s.key || m.s.no);
+        exRows.push('<tr><td>' + esc(m.s.cls + ' ' + m.s.no + '번') + '</td><td>' + esc(m.s.name) + '</td><td>엑셀에만 있음</td><td><select data-ex="' + esc(k) + '"><option value="">확인 필요</option><option value="exclude"' + (S.exceptions[k] === 'exclude' ? ' selected' : '') + '>입력 제외</option></select></td></tr>');
+      });
+      var inX2 = {}; ms.forEach(function (m) { inX2[m.s.no] = 1; });
+      Object.keys(S.neis.students).filter(function (no) { return !inX2[no]; }).forEach(function (no) {
+        var key = S.neis.grd + '-' + S.neis.cls, isNoScore = S.data.noScore.some(function (x) { return x.indexOf(key + ' ' + no + '번 ') === 0; });
+        if (isNoScore) return;
+        var k2 = 'neis:' + key + '-' + no;
+        exRows.push('<tr><td>' + esc(key + ' ' + no + '번') + '</td><td>' + esc(S.neis.students[no]) + '</td><td>나이스에만 있음</td><td><select data-ex="' + esc(k2) + '"><option value="">확인 필요</option><option value="skip"' + (S.exceptions[k2] === 'skip' ? ' selected' : '') + '>입력 안 함</option></select></td></tr>');
+      });
+      if (exRows.length) notes.unshift('<div class="warn small" style="margin-top:6px"><b>확인 필요 학생</b></div><table><tr><th>반·번호</th><th>이름</th><th>상황</th><th>처리</th></tr>' + exRows.join('') + '</table>');
       var vr = validationReport(ms);
       notes.unshift('<div class="' + (vr.errs.length ? 'err' : 'ok') + ' small" style="margin:6px 0"><b>입력 전 검사: ' + (vr.errs.length ? '오류 ' + vr.errs.length + '건' : '통과') + '</b>' + (vr.errs.length ? '<br>' + vr.errs.map(esc).join('<br>') : '') + (vr.warns.length ? '<div class="warn">' + vr.warns.map(esc).join('<br>') + '</div>' : '') + '</div>');
     }
     $('pv').innerHTML = h + notes.join('');
-    Array.prototype.forEach.call(root.querySelectorAll('#pv select'), function (sel) {
+    Array.prototype.forEach.call(root.querySelectorAll('#pv select[data-ex]'), function (sel) {
+      sel.onchange = function () { if (sel.value) S.exceptions[sel.dataset.ex] = sel.value; else delete S.exceptions[sel.dataset.ex]; renderPreview(); };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('#pv select[data-no]'), function (sel) {
       sel.onchange = function () {
         var no = sel.dataset.no, a = sel.dataset.a; S.override[no] = S.override[no] || {};
         if (sel.value) S.override[no][a] = sel.value; else delete S.override[no][a];
