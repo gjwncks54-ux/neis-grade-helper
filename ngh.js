@@ -1,4 +1,4 @@
-/* 성적 입력 도우미 v1.3 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
+/* 성적 입력 도우미 v1.4 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
 (function(){
 var _h=document.getElementById("ngh-host");if(_h){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}
 /* ===== core: bytes, crypto, CFB, ZIP, XLSX (no external libs) ===== */
@@ -461,14 +461,14 @@ var NGH = (function () {
 /* ===== app: 성적 입력 도우미 (점수 → 단계 → 나이스 dsMain / 결과 엑셀) ===== */
 (function () {
   'use strict';
-  var VERSION = '1.3';
+  var VERSION = '1.4';
 
   // ── 영역별 계산 방식 (학교 양식에 맞춰 한 번만 정해두는 곳) ──
   // cols: 점수 열 제목(소제목 줄)과 맞출 패턴, 여러 개면 평균
   // neis: 나이스 평가요소(평가요소 문구)에서 이 영역을 알아볼 단어
   var RECIPE = [
     { area: 'Reading',   cols: [/^final\s*exam\s*\(100\)$/i], neis: ['읽'] },
-    { area: 'Speaking',  cols: [/^speaking\s*\(100\)$/i],     neis: ['말하', '말 하'] },
+    { area: 'Speaking',  cols: [/^speaking\s*\(100\)$/i],     neis: ['말하', '말 하', '활동'] },
     { area: 'Writing',   cols: [/^wr?iting\s*\(100\)$/i],     neis: ['쓰기', '쓰'] },
     { area: 'Listening', cols: [/^listening\s*\(100\)$/i],    neis: ['듣'] }
   ];
@@ -660,10 +660,86 @@ var NGH = (function () {
     return { done: done, modified: mod, skipped: skipped };
   }
 
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function visibleTextClick(text) {
+    var el = Array.prototype.filter.call(document.querySelectorAll('a,div,span,li'), function (e) { var r = e.getBoundingClientRect(); return e.childElementCount === 0 && norm(e.textContent) === text && r.width > 0 && r.height > 0; })[0];
+    if (!el) return false;
+    ['mousedown', 'mouseup', 'click'].forEach(function (t) { el.dispatchEvent(new MouseEvent(t, { bubbles: true })); });
+    return true;
+  }
+  function authCombos() {
+    var P = cpr.core.Platform.INSTANCE;
+    var cs = P.getAllRunningAppInstances().filter(function (a) { if (!/udcSwcAuth/.test(a.id)) return false; try { return a.getContainer().isShowing(); } catch (e) { return false; } })
+      .map(function (a) { var c = a.lookup('cmbUdcAuth'); return { c: c, items: c.getItems().map(function (x) { return { label: String(x.label), value: String(x.value) }; }) }; });
+    return {
+      year: cs.filter(function (x) { return x.items.some(function (i) { return /^\d{4}$/.test(i.value); }); })[0],
+      sem: cs.filter(function (x) { return x.items.length && x.items.every(function (i) { return /^[12]$/.test(i.value); }); })[0],
+      grade: cs.filter(function (x) { return x.items.length && x.items.every(function (i) { return /^[1-6]$/.test(i.value); }) && !x.items.every(function (i) { return /^[12]$/.test(i.value); }); })[0],
+      cls: cs.filter(function (x) { return x.items.length && x.items.every(function (i) { return /^\d{2}$/.test(i.value); }); })[0],
+      sbjt: cs.filter(function (x) { return x.items.some(function (i) { return /:/.test(i.value); }); })[0]
+    };
+  }
+  async function ensureSubjectScreen() {
+    function m02() { return cpr.core.Platform.INSTANCE.getAllRunningAppInstances().filter(function (a) { if (!/els_scres00_m02/.test(a.id)) return false; try { return a.getContainer().isShowing(); } catch (e) { return false; } })[0]; }
+    if (m02()) return m02();
+    if (!cpr.core.Platform.INSTANCE.getAllRunningAppInstances().some(function (a) { return /els_scres00_m00/.test(a.id); })) {
+      if (!visibleTextClick('교과평가')) { visibleTextClick('영어교육-성적'); await sleep(500); visibleTextClick('학생평가'); await sleep(500); visibleTextClick('교과평가'); }
+      for (var i = 0; i < 30 && !cpr.core.Platform.INSTANCE.getAllRunningAppInstances().some(function (a) { return /els_scres00_m00/.test(a.id); }); i++) await sleep(300);
+    }
+    visibleTextClick('교과별 평가');
+    for (var j = 0; j < 30 && !m02(); j++) await sleep(300);
+    if (!m02()) throw new Error('교과평가 > 교과별 평가 화면을 열지 못했습니다. 메뉴에서 직접 연 뒤 다시 눌러주세요.');
+    return m02();
+  }
+  function modifiedRows() { var c = neisCtx(); if (!c) return 0; var n = 0; for (var i = 0; i < c.ds.getRowCount(); i++) if (c.ds.getRowStateString(i) === 'U') n++; return n; }
+  async function goClass(cls) {
+    var m = /^(\d+)-(\d+)$/.exec(cls); if (!m) throw new Error('반 표기를 읽지 못했습니다: ' + cls);
+    if (modifiedRows() && !confirm('지금 화면에 저장하지 않은 입력값이 있습니다. 다른 반을 조회하면 사라집니다.\n계속할까요?')) return false;
+    var app = await ensureSubjectScreen(), f = authCombos();
+    if (!f.grade || !f.cls || !f.sbjt) throw new Error('학년·반·교과 선택칸을 찾지 못했습니다.');
+    if (!f.grade.items.some(function (i) { return i.value === m[1]; })) throw new Error('나이스에서 ' + m[1] + '학년을 선택할 수 없습니다.');
+    f.grade.c.selectItemByValue(m[1]); await sleep(1200); f = authCombos();
+    var clsCode = ('0' + m[2]).slice(-2);
+    if (!f.cls || !f.cls.items.some(function (i) { return i.value === clsCode; })) throw new Error('나이스에서 ' + cls + '반을 선택할 수 없습니다.');
+    f.cls.c.selectItemByValue(clsCode); await sleep(900); f = authCombos();
+    var eng = f.sbjt.items.filter(function (i) { return /영어/.test(i.label); })[0]; if (!eng) throw new Error(cls + '반 교과 목록에 영어가 없습니다.');
+    f.sbjt.c.selectItemByValue(eng.value); await sleep(700);
+    var ds = app.lookup('dsMain');
+    function loaded() { return ds.getRowCount() && String(ds.getValue(0, 'grd')) === m[1] && String(ds.getValue(0, 'clsCd')) === clsCode && /영어/.test(ds.getValue(0, 'sbjtNm')); }
+    app.lookup('btnSearch').click();
+    for (var i = 0; i < 70 && !loaded(); i++) await sleep(300);
+    if (!ds.getRowCount()) throw new Error(cls + '반 조회 결과가 없습니다.');
+    if (!loaded()) throw new Error('조회 후 화면이 ' + cls + '반 영어로 바뀌지 않았습니다. 나이스 알림창이 떠 있는지 확인하세요.');
+    return true;
+  }
+  function validationReport(ms) {
+    var n = S.neis, errs = [], warns = [], d = S.data;
+    if (!n) return { errs: ['나이스 화면을 찾지 못했습니다.'], warns: warns };
+    var vals = Object.keys(S.map).map(function (k) { return S.map[k]; }).filter(Boolean);
+    RECIPE.forEach(function (rc) { var c = vals.filter(function (v) { return v === rc.area; }).length; if (c !== 1) errs.push(rc.area + ' 연결이 ' + c + '개입니다.'); });
+    if (vals.length !== n.elements.length) errs.push('연결되지 않은 나이스 평가요소가 있습니다.');
+    ms.forEach(function (m) { if (m.st === 'nameDiff') errs.push(m.s.cls + ' ' + m.s.no + '번 이름 불일치: 엑셀 ' + m.s.name + ', 나이스 ' + n.students[m.s.no]); else if (m.st === 'notInNeis') errs.push(m.s.cls + ' ' + m.s.no + '번 ' + m.s.name + '이(가) 나이스에 없습니다.'); });
+    var inX = {}; ms.forEach(function (m) { inX[m.s.no] = 1; });
+    var noScore = d.integrated ? d.noScore.filter(function (x) { return x.indexOf(n.grd + '-' + n.cls + ' ') === 0; }) : [];
+    Object.keys(n.students).forEach(function (no) { if (!inX[no]) { var txt = n.grd + '-' + n.cls + ' ' + no + '번 ' + n.students[no]; if (noScore.some(function (x) { return x.indexOf(n.grd + '-' + n.cls + ' ' + no + '번 ') === 0; })) warns.push('점수 없음: ' + txt); else errs.push('엑셀에 없는 나이스 학생: ' + txt); } });
+    ms.forEach(function (m) { RECIPE.forEach(function (rc) { if (m.s.scores[rc.area] == null) errs.push(m.s.cls + ' ' + m.s.no + '번 ' + rc.area + ' 점수 없음'); }); });
+    if (!cutsReady()) errs.push('기준값이 비어 있거나 순서가 맞지 않습니다.');
+    return { errs: errs, warns: warns };
+  }
+  function verifyNeis(map, finalOf) {
+    var c = neisCtx(), ds = c.ds, bad = [], expected = 0, ok = 0;
+    for (var i = 0; i < ds.getRowCount(); i++) {
+      var key = ds.getValue(i, 'sccesCtrCd') + '|' + ds.getValue(i, 'sccesCtrSn'), area = map[key]; if (!area) continue;
+      var want = finalOf(ds.getValue(i, 'clsNo'), area); if (!want) continue; expected++;
+      if (ds.getValue(i, 'evlCtrNm') === want && ds.getValue(i, 'evlCtrCd') && ds.getValue(i, 'evlCtrCn')) ok++; else bad.push(ds.getValue(i, 'clsNo') + '번 ' + ds.getValue(i, 'stuFlnm') + ' ' + area);
+    }
+    return { expected: expected, ok: ok, bad: bad };
+  }
+
   // ───────────────────────── 상태 ─────────────────────────
   var S = {
     file: null, bytes: null, password: '', wb: null, data: null, neis: null,
-    map: {}, levels: {}, cut: {}, cutTouched: {}, override: {}
+    map: {}, levels: {}, cut: {}, cutTouched: {}, override: {}, classProgress: {}
   };
   function loadJSON(k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } }
   function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
@@ -892,6 +968,12 @@ var NGH = (function () {
       if (!d.integrated && fileCls[1] && (fileCls[1] !== String(n.grd) || fileCls[2] !== String(n.cls)))
         h += '<div class="err"><b>⚠ 파일은 ' + fileCls[1] + '-' + fileCls[2] + '반인데 나이스 화면은 ' + n.grd + '-' + n.cls + '반입니다.</b></div>';
     } else h += '<div class="warn small">나이스 입력 불가: ' + esc(S.neisReason || '교과평가 화면을 찾지 못했습니다.') + '<br>조회한 뒤 <button class="lk" id="rf">나이스 다시 확인</button> (결과 엑셀은 지금도 만들 수 있습니다)</div>';
+    if (d.integrated) {
+      var classes = Array.from(new Set(d.students.map(function (s) { return s.cls; }))).sort();
+      var grades = Array.from(new Set(classes.map(function (x) { return x.split('-')[0]; })));
+      h += '<div class="row" style="margin-top:8px"><b>반 이동</b>' + (grades.length > 1 ? '<span class="err small">학년이 섞여 있어 자동 이동을 막았습니다.</span>' :
+        classes.map(function (c) { var p = S.classProgress[c]; return '<button class="lk" data-go="' + esc(c) + '">' + esc(c) + (p ? ' · ' + esc(p) : '') + '</button>'; }).join('')) + '</div>';
+    }
     h += '</div>';
     // 연결
     if (n) {
@@ -918,6 +1000,16 @@ var NGH = (function () {
       };
     });
     if ($('ap')) $('ap').onclick = doApply;
+    Array.prototype.forEach.call(root.querySelectorAll('[data-go]'), function (b) {
+      b.onclick = async function () {
+        var cls = b.dataset.go; b.disabled = true; $('st').innerHTML = '<span class="muted">' + esc(cls) + '반으로 이동해 조회하는 중…</span>';
+        try {
+          var moved = await goClass(cls); if (!moved) { b.disabled = false; $('st').innerHTML = '<span class="warn">이동을 취소했습니다.</span>'; return; }
+          refreshNeis(); S.classProgress[cls] = '조회됨'; renderMain();
+          $('st').innerHTML = '<span class="ok">' + esc(cls) + '반 영어를 조회했습니다. 검사 결과를 확인한 뒤 나이스에 입력을 누르세요.</span>';
+        } catch (e) { b.disabled = false; $('st').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
+      };
+    });
     if ($('rf')) $('rf').onclick = function () {
       var ch = refreshNeis(); renderMain();
       $('st').innerHTML = S.neis ? (ch ? '<span class="warn">나이스 화면을 다시 불러왔습니다. 연결과 기준값을 확인하세요.</span>' : '<span class="ok">나이스 화면이 그대로입니다.</span>') : '<span class="err">' + esc(S.neisReason) + '</span>';
@@ -979,6 +1071,10 @@ var NGH = (function () {
       var miss = Object.keys(S.neis.students).filter(function (no) { return !inX[no]; });
       if (miss.length) notes.push('<div class="warn small">엑셀에 없는 나이스 학생(입력 안 함): ' + miss.map(function (no) { return no + '번 ' + esc(S.neis.students[no]); }).join(', ') + '</div>');
     }
+    if (S.data.integrated && S.neis) {
+      var vr = validationReport(ms);
+      notes.unshift('<div class="' + (vr.errs.length ? 'err' : 'ok') + ' small" style="margin:6px 0"><b>입력 전 검사: ' + (vr.errs.length ? '오류 ' + vr.errs.length + '건' : '통과') + '</b>' + (vr.errs.length ? '<br>' + vr.errs.map(esc).join('<br>') : '') + (vr.warns.length ? '<div class="warn">' + vr.warns.map(esc).join('<br>') + '</div>' : '') + '</div>');
+    }
     $('pv').innerHTML = h + notes.join('');
     Array.prototype.forEach.call(root.querySelectorAll('#pv select'), function (sel) {
       sel.onchange = function () {
@@ -988,7 +1084,7 @@ var NGH = (function () {
         root.querySelector('[data-cnt="' + a + '"]').textContent = counts(a);
       };
     });
-    var ready = cutsReady();
+    var ready = cutsReady() && !(S.data.integrated && S.neis && validationReport(ms).errs.length);
     if ($('ap')) $('ap').disabled = !ready;
     $('dl').disabled = !ready;
     $('st').innerHTML = ready ? '' : '<span class="warn">기준값을 모두 입력하세요 (위 단계일수록 큰 점수)</span>';
@@ -1008,9 +1104,24 @@ var NGH = (function () {
     if (fc && S.neis && (fc[1] !== String(S.neis.grd) || fc[2] !== String(S.neis.cls)) &&
         !confirm('파일은 ' + fc[1] + '-' + fc[2] + '반, 나이스 화면은 ' + S.neis.grd + '-' + S.neis.cls + '반입니다.\n그래도 입력할까요? (이름이 다른 학생은 어차피 건너뜁니다)')) return;
     try {
-      var r = neisApply(S.map, function (no, area) { var s = byNo[no]; return s ? finalLevel(s, area) : null; });
-      $('st').innerHTML = '<span class="ok">나이스에 ' + r.done + '칸 입력 (변경 ' + r.modified + '행). 화면 확인 후 <b>저장</b>은 직접 누르세요.</span>' +
+      var ms0 = matchedStudents();
+      if (S.data.integrated) {
+        var vr0 = validationReport(ms0); if (vr0.errs.length) { renderPreview(); $('st').innerHTML = '<span class="err">입력 전 검사에서 오류 ' + vr0.errs.length + '건이 있어 입력하지 않았습니다.</span>'; return; }
+        var cx = neisCtx(), filled = 0; for (var q = 0; q < cx.ds.getRowCount(); q++) if (S.map[cx.ds.getValue(q, 'sccesCtrCd') + '|' + cx.ds.getValue(q, 'sccesCtrSn')] && cx.ds.getValue(q, 'evlCtrNm')) filled++;
+        if (filled && !confirm('이미 단계가 들어 있는 칸이 ' + filled + '개 있습니다. 덮어쓸까요?')) return;
+      }
+      var finalOf = function (no, area) { var s = byNo[no]; return s ? finalLevel(s, area) : null; };
+      var r = neisApply(S.map, finalOf);
+      var vf = S.data.integrated ? verifyNeis(S.map, finalOf) : null;
+      if (vf && (vf.bad.length || vf.expected !== vf.ok || r.done !== vf.expected)) {
+        $('st').innerHTML = '<span class="err"><b>입력 후 검사 실패. 저장하지 마세요.</b> 예상 ' + vf.expected + '칸, 일치 ' + vf.ok + '칸</span>' + (vf.bad.length ? '<div class="err">' + esc(vf.bad.slice(0, 12).join(', ')) + '</div>' : '');
+        if (S.neis) S.classProgress[S.neis.grd + '-' + S.neis.cls] = '검사 실패';
+        return;
+      }
+      if (S.neis) S.classProgress[S.neis.grd + '-' + S.neis.cls] = '입력 완료(저장 전)';
+      $('st').innerHTML = '<span class="ok">나이스에 ' + r.done + '칸 입력 (변경 ' + r.modified + '행).' + (vf ? ' 입력 후 검사 ' + vf.ok + '/' + vf.expected + '칸 일치.' : '') + ' 화면 확인 후 <b>저장</b>은 직접 누르세요.</span>' +
         (r.skipped.length ? '<div class="warn">건너뜀: ' + esc(Array.from(new Set(r.skipped)).join(', ')) + '</div>' : '');
+      var btn = root.querySelector('[data-go="' + (S.neis.grd + '-' + S.neis.cls) + '"]'); if (btn) btn.textContent = S.neis.grd + '-' + S.neis.cls + ' · 입력 완료(저장 전)';
     } catch (e) { $('st').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
   }
 
