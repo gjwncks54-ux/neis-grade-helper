@@ -1,6 +1,6 @@
-/* 성적 입력 도우미 v1.4.2 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
+/* 성적 입력 도우미 v1.4.3 - 나이스 교과평가·학기말종합의견 화면에서 실행 */
 (function(){
-var NGH_VER="1.4.2";var _h=document.getElementById("ngh-host");if(_h){var _t=(_h.shadowRoot&&_h.shadowRoot.querySelector(".hd")&&_h.shadowRoot.querySelector(".hd").innerText)||"";if(_t.indexOf("v"+NGH_VER)>=0){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}_h.remove();window.__ngh=null;}
+var NGH_VER="1.4.3";var _h=document.getElementById("ngh-host");if(_h){var _t=(_h.shadowRoot&&_h.shadowRoot.querySelector(".hd")&&_h.shadowRoot.querySelector(".hd").innerText)||"";if(_t.indexOf("v"+NGH_VER)>=0){if(window.__ngh&&window.__ngh.wake){window.__ngh.wake();}else{_h.style.display="";}return;}_h.remove();window.__ngh=null;}
 /* ===== core: bytes, crypto, CFB, ZIP, XLSX (no external libs) ===== */
 var NGH = (function () {
   'use strict';
@@ -461,7 +461,7 @@ var NGH = (function () {
 /* ===== app: 성적 입력 도우미 (점수 → 단계 → 나이스 dsMain / 결과 엑셀) ===== */
 (function () {
   'use strict';
-  var VERSION = '1.4.2';
+  var VERSION = '1.4.3';
 
   // ── 영역별 계산 방식 (학교 양식에 맞춰 한 번만 정해두는 곳) ──
   // cols: 점수 열 제목(소제목 줄)과 맞출 패턴, 여러 개면 평균
@@ -675,6 +675,17 @@ var NGH = (function () {
   function neisAlertText() {
     return Array.prototype.map.call(document.querySelectorAll('.cl-dialog.modal-msg'), function (e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 ? norm(e.innerText) : ''; }).filter(Boolean)[0] || '';
   }
+  function dismissNeisAlert() {
+    var a = cpr.core.Platform.INSTANCE.getAllRunningAppInstances().filter(function (x) { return /^app\/cmn\/alert/.test(x.id); })[0];
+    var b = a && a.lookup('btnConfirm'); if (!b) return false; b.click(); return true;
+  }
+  async function dismissInitialPermissionAlert() {
+    var t = neisAlertText();
+    if (!/자료권한이 존재하지 않습니다/.test(t) || !/CM000/.test(t)) return false;
+    if (!dismissNeisAlert()) return false;
+    for (var i = 0; i < 15 && neisAlertText(); i++) await sleep(200);
+    return !neisAlertText();
+  }
   function checkNeisAlert(step) {
     var t = neisAlertText();
     if (t) throw new Error('나이스 알림이 떠서 멈췄습니다' + (step ? ' (' + step + ')' : '') + ': ' + t.replace(/^알림\s*/, '').replace(/\s*확인$/, '') + ' — 알림을 닫고 다시 눌러주세요.');
@@ -708,6 +719,8 @@ var NGH = (function () {
     }
     visibleTextClick('교과별 평가');
     for (var j = 0; j < 30 && !m02(); j++) await sleep(300);
+    await sleep(500);
+    await dismissInitialPermissionAlert();
     checkNeisAlert('교과별 평가 탭');
     if (!m02()) throw new Error('교과평가 > 교과별 평가 화면을 열지 못했습니다. 메뉴에서 직접 연 뒤 다시 눌러주세요.');
     return m02();
@@ -716,6 +729,7 @@ var NGH = (function () {
   async function goClass(cls) {
     var m = /^(\d+)-(\d+)$/.exec(cls); if (!m) throw new Error('반 표기를 읽지 못했습니다: ' + cls);
     if (modifiedRows() && !confirm('지금 화면에 저장하지 않은 입력값이 있습니다. 다른 반을 조회하면 사라집니다.\n계속할까요?')) return false;
+    await dismissInitialPermissionAlert();
     checkNeisAlert('시작 전');
     var app = await ensureSubjectScreen(), f = authCombos();
     if (!f.grade || !f.cls || !f.sbjt) throw new Error('학년·반·교과 선택칸을 찾지 못했습니다.');
